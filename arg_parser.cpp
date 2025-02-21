@@ -63,3 +63,63 @@ void print_args() {
     std::cout << "Shared-Memory GPU: " << (use_shared_mem ? "Enabled" : "Disabled") << "\n";
     std::cout << "KMeans++: " << (use_kpp ? "Enabled" : "Disabled") << "\n";
 }
+
+Point load_point(std::string line, std::string delimiter) {
+    int start = 0;
+    int end = 0;
+    std::vector<float> pos;
+    int label;
+
+    for (int i = 0; i <= dims; ++i) {
+        end = line.find(delimiter, start);
+        std::string num = line.substr(start, end - start);
+
+        if (i == 0) {
+            label = std::stoi(num);
+        } else {
+            pos.push_back(std::stof(num));
+        }
+
+        start = end + delimiter.length();
+    }
+
+    pos.push_back(std::stof(line.substr(start)));
+    Point p = {label, pos};
+    return p;
+}
+
+void read_points(std::vector<Point> &points) {
+    std::ifstream in(input_file);
+
+    if (!in.is_open()) {
+        std::cout << "Error: File could not be opened. Path: " << input_file << std::endl;
+        return;
+    }
+
+    std::string line;
+    getline(in, line);
+    int num_points = std::stoi(line);
+
+    for (int i = 0; i < 5; ++i) {
+        getline(in, line);
+        Point p = load_point(line, " ");
+        points.push_back(p);
+    }
+
+    in.close();
+}
+
+void print_points(std::vector<Point> &points) {
+    for (size_t i = 0; i < 5; ++i) {
+        std::cout << "Point " << points[i].label << ", Position: [";
+
+        for (size_t j = 0; j < dims; ++j) {
+            std::cout << points[i].pos[j];
+            if (j < dims - 1) {
+                std::cout << ", ";
+            }
+        }
+
+        std::cout << "]\n";
+    }
+}
