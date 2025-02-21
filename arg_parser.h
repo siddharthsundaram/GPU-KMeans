@@ -12,6 +12,10 @@ namespace bpo = boost::program_options;
 struct Point {
     int label;
     std::vector<float> pos;
+
+    // bool operator<(const Point& other) const {
+    //     return label < other.label;
+    // }
 };
 
 extern int num_clusters;

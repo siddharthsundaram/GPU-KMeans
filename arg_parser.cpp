@@ -21,7 +21,7 @@ void parse_args(int argc, char **argv) {
         ("-m", bpo::value<int>()->default_value(100), "Maximum number of iterations")
         ("-t", bpo::value<double>()->default_value(1e-4), "Threshold for convergence test")
         ("-c", "Output cluster centroids if true, labels of all points otherwise")
-        ("-s", bpo::value<int>()->default_value(69), "Random generator seed")
+        ("-s", bpo::value<int>()->default_value(8675309), "Random generator seed")
         ("-g", "Enable GPU implementation if true, don't otherwise")
         ("-f", "Enable shared memory GPU implementation if true, don'f otherwise")
         ("-p", "Enable Kmeans++ implementation if true, don't otherwise");
@@ -100,7 +100,7 @@ void read_points(std::vector<Point> &points) {
     getline(in, line);
     int num_points = std::stoi(line);
 
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < num_points; ++i) {
         getline(in, line);
         Point p = load_point(line, " ");
         points.push_back(p);

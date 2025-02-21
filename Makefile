@@ -26,7 +26,7 @@ $(EXE): $(CUDA_OBJS) $(CPP_OBJS)
 	$(NVCC) -o $(EXE) $(LIBS) $(CUDA_OBJS) $(CPP_OBJS)
 
 test:
-	./$(EXE) -k 5 -d 4 -i tests/random-n2048-d16-c16.txt -m 100 -t 0.01 -c -s 42 -g -f -p
+	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -g -f -p
 
 
 clean:
