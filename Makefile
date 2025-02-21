@@ -2,12 +2,12 @@ CXX = g++
 NVCC = nvcc
 
 CFLAGS = -std=c++17 -I/usr/include
-NVCCFLAGS = -std=c++17 -Xcompiler -fPIC
+NVCCFLAGS = -std=c++17 -Xcompiler -fPIC -arch=sm_75
 
 LIBS = -lboost_program_options
 
-CSRC = arg_parser.cpp
-CUDASRC = kmeans.cu
+CSRC = kmeans.cpp arg_parser.cpp
+CUDASRC = kmeans_kernel.cu
 
 CPP_OBJS = $(CSRC:.cpp=.o)
 CUDA_OBJS = $(CUDASRC:.cu=.o)
@@ -17,13 +17,13 @@ EXE = kmeans
 all: $(EXE)
 
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(NVCC) $(CFLAGS) -o $@ -c $< 
 
 %.o: %.cu
-	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+	$(NVCC) $(NVCCFLAGS) -o $@ -c $<
 
 $(EXE): $(CUDA_OBJS) $(CPP_OBJS)
-	$(NVCC) $(CUDA_OBJS) $(CPP_OBJS) -o $(EXE) $(LIBS)
+	$(NVCC) -o $(EXE) $(LIBS) $(CUDA_OBJS) $(CPP_OBJS)
 
 test:
 	# ./$(EXE) -k 5 -d 3 -i data.txt -m 100 -t 0.01

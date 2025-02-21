@@ -5,7 +5,7 @@ using namespace std;
 
 int main(int argc, char **argv) {
     parse_args(argc, argv);
-    // print_args();
+    print_args();
 
     return 0;
 }
