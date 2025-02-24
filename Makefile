@@ -1,10 +1,9 @@
-CXX = g++
 NVCC = nvcc
 
-CFLAGS = -std=c++17 -I/usr/include
-NVCCFLAGS = -std=c++17 -Xcompiler -fPIC -arch=sm_75
+CFLAGS = -std=c++17 -I/usr/include -I/lusr/cuda-12.2.2/include -L/lusr/cuda-12.2.2/lib64
+NVCCFLAGS = -std=c++17 -Xcompiler -fPIC -arch=sm_75 -I/lusr/cuda-12.2.2/include -L/lusr/cuda-12.2.2/lib64
 
-LIBS = -lboost_program_options
+LIBS = -lboost_program_options -lcudart
 
 CSRC = kmeans.cpp arg_parser.cpp
 CUDASRC = kmeans_kernel.cu
