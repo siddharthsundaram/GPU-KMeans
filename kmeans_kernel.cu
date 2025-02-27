@@ -17,7 +17,8 @@
 //     *res = static_cast<float>(rand()) / static_cast<float>((long long) RAND_MAX + 1);
 // }
 
-__global__ void kernel_assign_cluster(float *points, float *centroids, int *assignment, int num_points, int num_clusters, int dims) {
+__global__ void kernel_assign_cluster(float *points, float *centroids, int *assignment, 
+                                        int num_points, int num_clusters, int dims) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < num_points) {
@@ -42,7 +43,57 @@ __global__ void kernel_assign_cluster(float *points, float *centroids, int *assi
     }
 }
 
-__global__ void kernel_compute_new_centroids(float *points, float *centroids, int *assignment, int num_points, int num_clusters, int dims) {
+__global__ void kernel_shmem_assign_cluster(float *points, float *centroids,
+                                            int *assignment, int num_points, 
+                                            int num_clusters, int dims) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    extern __shared__ float shared_mem[];
+    float *local_centroids = shared_mem;
+    float *local_points = (float *) &shared_mem[num_clusters * dims];
+
+    if (idx < num_points) {
+
+        // Load point data into shared memory (only for its own block)
+        for (int i = 0; i < dims; ++i) {
+            local_points[idx * dims + i] = points[idx * dims + i];
+        }
+
+        // For each block, load all centroids into shared memory
+        if (threadIdx.x < num_clusters) {
+            for (int i = 0; i < dims; ++i) {
+                local_centroids[threadIdx.x * dims + i] = centroids[threadIdx.x * dims + i];
+            }
+        }
+
+        __syncthreads();
+
+        float min_dist = FLT_MAX;
+        int centroid_idx;
+
+        // Find closest centroid for this particular point
+        for (int i = 0; i < num_clusters; ++i) {
+            float dist = 0.0;
+            for (int j = 0; j < dims; ++j) {
+                float d = local_points[idx * dims + j] - local_centroids[i * dims + j];
+                dist += d * d;
+            }
+
+            if (dist < min_dist) {
+                min_dist = dist;
+                centroid_idx = i;
+            }
+        }
+
+        assignment[idx] = centroid_idx;
+    }
+}
+
+__global__ void kernel_compute_new_centroids(float *points, float *centroids, 
+                                            int *assignment, int num_points, 
+                                            int num_clusters, int dims) {
+
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < num_clusters) {
@@ -73,7 +124,10 @@ __global__ void kernel_compute_new_centroids(float *points, float *centroids, in
     }
 }
 
-__global__ void kernel_check_convergence(float *new_centroids, float *old_centroids, bool *converged, int num_clusters, int dims, float thresh) {
+__global__ void kernel_check_convergence(float *new_centroids, float *old_centroids, 
+                                        bool *converged, int num_clusters, int dims, 
+                                        float thresh) {
+
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < num_clusters) {
@@ -87,5 +141,60 @@ __global__ void kernel_check_convergence(float *new_centroids, float *old_centro
         }
 
         converged[idx] = true;
+    }
+}
+
+__global__ void kernel_shmem_compute_new_centroids(float *points, float *centroids, 
+                                                    int *assignment, int *counts, 
+                                                    int num_points, int num_clusters, 
+                                                    int dims) {
+
+    int point_idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    extern __shared__ float shared_mem[];
+    float *local_centroids = shared_mem;
+    int *local_counts = (int *) &shared_mem[num_clusters * dims];
+
+    if (point_idx < num_points) {
+        if (threadIdx.x < num_clusters) {
+            for (int i = 0; i < dims; ++i) {
+                local_centroids[threadIdx.x * dims + i] = 0.0;
+            }
+
+            local_counts[threadIdx.x] = 0;
+        }
+
+        __syncthreads();
+
+        // Compute partial centroid sums
+        int centroid_idx = assignment[point_idx];
+        if (centroid_idx >= 0 && centroid_idx < num_clusters) {
+            // printf("Thread %d writing to centroid %d\n", point_idx, centroid_idx);
+            atomicAdd(&local_counts[centroid_idx], 1);
+            for (int i = 0; i < dims; ++i) {
+                atomicAdd(&local_centroids[centroid_idx * dims + i], points[point_idx * dims + i]); 
+            }
+        }
+
+        __syncthreads();
+
+        // Update global memory with partial sums and counts
+        if (threadIdx.x < num_clusters) {
+            for (int i = 0; i < dims; ++i) {
+                atomicAdd(&centroids[threadIdx.x * dims + i], local_centroids[threadIdx.x * dims + i]);
+            }
+
+            atomicAdd(&counts[threadIdx.x], local_counts[threadIdx.x]);
+        }
+    }
+}
+
+__global__ void kernel_shmem_average_centroids(float *centroids, int *counts, int num_clusters, int dims) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < num_clusters) {
+        for (int i = 0; i < dims; ++i) {
+            centroids[idx * dims + i] /= max(1, counts[idx]);
+        }
     }
 }

@@ -222,21 +222,42 @@ void par_kmeans() {
     // CHECK_KERNEL(cudaMemcpy(d_old_centroids, h_old_centroids, num_clusters * dims * sizeof(float)));
 
     // Saw that RTX 6000 can only have 1024 threads per block, check this
-    int num_point_threads = std::min((int) points.size(), 1024);
-    int num_cluster_threads = std::min(num_clusters, 1024);
+    int num_point_threads = std::min((int) points.size(), 256);
+    int num_cluster_threads = std::min(num_clusters, 256);
     dim3 point_block (num_point_threads);
     dim3 point_grid (points.size() + point_block.x - 1 / point_block.x);
     dim3 centroid_block (num_cluster_threads);
     dim3 centroid_grid (num_clusters + centroid_block.x - 1 / centroid_block.x);
+    int assignment_shared_mem_size = sizeof(float) * dims * (num_clusters + points.size());
+    int compute_shared_mem_size = sizeof(float) * num_clusters * dims + sizeof(int) * num_clusters;
 
     while (num_iters++ < max_iter && !converged) {
-        // std::memcpy(h_old_centroids, h_centroids, num_clusters * dims * sizeof(float));
 
-        // Parallelize cluster assignment
         kernel_assign_cluster<<<point_grid, point_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+        
+        if (use_shared_mem) {
+            std::cout << "WE USING SHARED MEMORY BABY" << std::endl;
 
-        // Parallelize new centroid computation
-        kernel_compute_new_centroids<<<centroid_grid, centroid_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+            // Parallelize cluster assignment
+            // kernel_shmem_assign_cluster<<<point_grid, point_block, assignment_shared_mem_size>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+
+            // Parallelize new centroid computation
+            int *d_counts;
+            CHECK_KERNEL(cudaMalloc(&d_counts, sizeof(int) * num_clusters));
+            cudaMemset(d_centroids, 0, num_clusters * dims * sizeof(float));
+            cudaMemset(d_counts, 0, num_clusters * sizeof(int));
+            kernel_shmem_compute_new_centroids<<<point_grid, point_block, compute_shared_mem_size>>>(d_points, d_centroids, d_assignment, d_counts, points.size(), num_clusters, dims);
+            cudaDeviceSynchronize();
+            kernel_shmem_average_centroids<<<centroid_grid, centroid_block>>>(d_centroids, d_counts, num_clusters, dims);
+            CHECK_KERNEL(cudaFree(d_counts));
+        } else {
+
+            // Parallelize cluster assignment
+            // kernel_assign_cluster<<<point_grid, point_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+
+            // Parallelize new centroid computation
+            kernel_compute_new_centroids<<<centroid_grid, centroid_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+        }
 
         // Parallelize convergence check
         kernel_check_convergence<<<centroid_grid, centroid_block>>>(d_centroids, d_old_centroids, d_converged, num_clusters, dims, thresh);
@@ -333,10 +354,12 @@ int main(int argc, char **argv) {
     // print_points(points);
 
     srand(seed);
+
+    // TODO: Add case for kmeans++ implementation
     seq_kmeans_init_centroids();
 
     // Sequential implementation
-    if (!use_gpu) {
+    if (!use_gpu && !use_shared_mem && !use_kpp) {
 
         // std::cout << "Before Kmeans:" << std::endl;
         // print_centroids(); 
