@@ -1,22 +1,5 @@
 #include "kmeans_kernel.cuh"
 
-// __global__ void kernel_kmeans_init_centroids(int *indices, int num_points, int seed) {
-//     // float rand;
-//     // rand_float(&rand);
-//     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-//     curandState state;
-//     curand_init(seed, idx, 0, state);
-//     float rand = curand_uniform(&state);
-
-
-//     indices[idx] = (int) (rand * num_points);
-// }
-
-// __device__ void rand_float(float *res) {
-//     *res = static_cast<float>(rand()) / static_cast<float>((long long) RAND_MAX + 1);
-// }
-
 __global__ void kernel_assign_cluster(float *points, float *centroids, int *assignment, 
                                         int num_points, int num_clusters, int dims) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -49,16 +32,9 @@ __global__ void kernel_shmem_assign_cluster(float *points, float *centroids,
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    extern __shared__ float shared_mem[];
-    float *local_centroids = shared_mem;
-    float *local_points = (float *) &shared_mem[num_clusters * dims];
+    extern __shared__ float local_centroids[];
 
     if (idx < num_points) {
-
-        // Load point data into shared memory (only for its own block)
-        for (int i = 0; i < dims; ++i) {
-            local_points[idx * dims + i] = points[idx * dims + i];
-        }
 
         // For each block, load all centroids into shared memory
         if (threadIdx.x < num_clusters) {
@@ -76,7 +52,7 @@ __global__ void kernel_shmem_assign_cluster(float *points, float *centroids,
         for (int i = 0; i < num_clusters; ++i) {
             float dist = 0.0;
             for (int j = 0; j < dims; ++j) {
-                float d = local_points[idx * dims + j] - local_centroids[i * dims + j];
+                float d = points[idx * dims + j] - local_centroids[i * dims + j];
                 dist += d * d;
             }
 
@@ -196,5 +172,28 @@ __global__ void kernel_shmem_average_centroids(float *centroids, int *counts, in
         for (int i = 0; i < dims; ++i) {
             centroids[idx * dims + i] /= max(1, counts[idx]);
         }
+    }
+}
+
+__global__ void kernel_kpp_dist_calc(float *centroids, float *points, int num_clusters, 
+                                    int num_points, float *distances, int dims) {
+    
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < num_points) {
+        float min_dist = FLT_MAX;
+        for (int i = 0; i < num_clusters; ++i) {
+            float dist = 0.0;
+            for (int j = 0; j < dims; ++j) {
+                float d = points[idx * dims + j] - centroids[i * dims + j];
+                dist += d * d;
+            }
+
+            if (dist < min_dist) {
+                min_dist = dist;
+            }
+        }
+
+        distances[idx] = min_dist;
     }
 }

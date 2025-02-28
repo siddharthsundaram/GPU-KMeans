@@ -16,4 +16,6 @@ __global__ void kernel_shmem_compute_new_centroids(float *points, float *centroi
                                                     int num_points, int num_clusters, 
                                                     int dims);
 __global__ void kernel_shmem_average_centroids(float *centroids, int *counts, int num_clusters, int dims);
+__global__ void kernel_kpp_dist_calc(float *centroids, float *points, int num_clusters, 
+                                    int num_points, float *distances, int dims);
 #endif

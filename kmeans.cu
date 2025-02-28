@@ -10,7 +10,11 @@
 
 std::vector<Point> points;
 std::vector<Point> centroids;
-std::map<int, std::vector<int>> final_clusters;
+// std::map<int, std::vector<int>> final_clusters;
+int *final_clusters;
+
+void print_output();
+void print_centroids();
 
 #define CHECK_KERNEL(call) { \
     cudaError_t error = call; \
@@ -28,8 +32,10 @@ float rand_float() {
 
 // Initialize k random centroids
 void seq_kmeans_init_centroids() {
+    // std::cout << "SEQ INIT" << std::endl;
     for (int i = 0; i < num_clusters; ++i) {
         int idx = (int) (rand_float() * points.size());
+        // std::cout << "RANDOM IDX IS " << idx << std::endl;
         centroids.push_back(points[idx]);
     }
 }
@@ -91,26 +97,24 @@ std::vector<Point> copy_centroids(std::vector<Point> centroids_to_copy) {
 // Compute new centroids by taking mean position of all points in the cluster
 std::vector<Point> compute_new_centroids() {
     std::vector<Point> new_centroids(num_clusters);
+    std::vector<int> counts(num_clusters);
+    std::vector<std::vector<float>> centroid_positions(num_clusters, std::vector<float>(dims));
 
-    for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
-        int cluster_idx = it->first;
-        std::vector<int> point_indices = final_clusters[cluster_idx];
-        std::vector<float> new_pos(dims);
+    for (int i = 0; i < points.size(); ++i) {
+        int cluster_idx = final_clusters[i];
+        counts[cluster_idx] += 1;
+        for (int j = 0; j < dims; ++j) {
+            centroid_positions[cluster_idx][j] += points[i].pos[j];
+        }
+    }
 
-        // Compute new centroid position
-        for (int i = 0; i < dims; i++) {
-            float dim_total = 0.0;
-            for (int point_idx : point_indices) {
-                Point p = points[point_idx];
-                dim_total += p.pos[i];
-            }
-
-            new_pos[i] = dim_total / (float) point_indices.size();
+    for (int i = 0; i < num_clusters; ++i) {
+        for (int j = 0; j < dims; ++j) {
+            centroid_positions[i][j] /= max(1, counts[i]);
         }
 
-        // Store new centroid
-        Point new_centroid = {-1, new_pos};
-        new_centroids[cluster_idx] = new_centroid;
+        Point new_centroid = {-1, centroid_positions[i]};
+        new_centroids[i] = new_centroid;
     }
 
     return new_centroids;
@@ -146,17 +150,15 @@ bool converged(std::vector<Point> old_centroids, std::vector<Point> new_centroid
 // Perform the Kmeans algorithm
 void seq_kmeans() {
     std::cout << "WE DOING SEQUENTIAL KMEANS :(" << std::endl;
-    std::vector<Point> old_centroids = default_centroids();
-    std::vector<Point> new_centroids = centroids;
+    static std::vector<Point> old_centroids = default_centroids();
+    static std::vector<Point> new_centroids = centroids;
     int num_iters = 0;
+    final_clusters = new int[points.size()];
 
     while (num_iters++ < max_iter && !converged(old_centroids, new_centroids)) {
 
         // Store current centroids for convergence criterion
-        old_centroids = copy_centroids(new_centroids);
-
-        // Map from centroid/cluster ID to vector of point IDs in that cluster
-        final_clusters.clear();
+        old_centroids = new_centroids;
 
         for (int i = 0; i < points.size(); ++i) {
             Point point = points[i];
@@ -175,7 +177,7 @@ void seq_kmeans() {
             }
 
             // Add point to cluster
-            final_clusters[centroid_idx].push_back(i);
+            final_clusters[i] = centroid_idx;
         }
 
         new_centroids = compute_new_centroids();
@@ -205,6 +207,7 @@ void par_kmeans() {
         }
     }
 
+    final_clusters = new int[points.size()];
     float *h_old_centroids = new float[num_clusters * dims];
     bool *h_converged = new bool[num_clusters];
     int num_iters = 0;
@@ -219,27 +222,26 @@ void par_kmeans() {
     CHECK_KERNEL(cudaMalloc(&d_converged, num_clusters * sizeof(bool)));
     CHECK_KERNEL(cudaMemcpy(d_points, h_points, points.size() * dims * sizeof(float), cudaMemcpyHostToDevice));
     CHECK_KERNEL(cudaMemcpy(d_centroids, h_centroids, num_clusters * dims * sizeof(float), cudaMemcpyHostToDevice));
-    // CHECK_KERNEL(cudaMemcpy(d_old_centroids, h_old_centroids, num_clusters * dims * sizeof(float)));
 
     // Saw that RTX 6000 can only have 1024 threads per block, check this
     int num_point_threads = std::min((int) points.size(), 256);
     int num_cluster_threads = std::min(num_clusters, 256);
     dim3 point_block (num_point_threads);
+
+    // TODO: Put parenthesis around numerator
     dim3 point_grid (points.size() + point_block.x - 1 / point_block.x);
     dim3 centroid_block (num_cluster_threads);
     dim3 centroid_grid (num_clusters + centroid_block.x - 1 / centroid_block.x);
-    int assignment_shared_mem_size = sizeof(float) * dims * (num_clusters + points.size());
+    int assignment_shared_mem_size = sizeof(float) * dims * (num_clusters);
     int compute_shared_mem_size = sizeof(float) * num_clusters * dims + sizeof(int) * num_clusters;
 
     while (num_iters++ < max_iter && !converged) {
-
-        kernel_assign_cluster<<<point_grid, point_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
         
         if (use_shared_mem) {
             std::cout << "WE USING SHARED MEMORY BABY" << std::endl;
 
             // Parallelize cluster assignment
-            // kernel_shmem_assign_cluster<<<point_grid, point_block, assignment_shared_mem_size>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+            kernel_shmem_assign_cluster<<<point_grid, point_block, assignment_shared_mem_size>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
 
             // Parallelize new centroid computation
             int *d_counts;
@@ -253,7 +255,7 @@ void par_kmeans() {
         } else {
 
             // Parallelize cluster assignment
-            // kernel_assign_cluster<<<point_grid, point_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+            kernel_assign_cluster<<<point_grid, point_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
 
             // Parallelize new centroid computation
             kernel_compute_new_centroids<<<centroid_grid, centroid_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
@@ -278,6 +280,8 @@ void par_kmeans() {
 
     // Copy centroid data back to host and clean up
     CHECK_KERNEL(cudaMemcpy(h_centroids, d_centroids, num_clusters * dims * sizeof(float), cudaMemcpyDeviceToHost));
+    CHECK_KERNEL(cudaMemcpy(final_clusters, d_assignment, points.size() * sizeof(int), cudaMemcpyDeviceToHost));
+    // TODO: Free all the device ptrs
     for (int i = 0; i < num_clusters; ++i) {
         std::vector<float> pos(dims);
         for (int j = 0; j < dims; ++j) {
@@ -306,41 +310,133 @@ void print_centroids() {
     }
 }
 
-void print_clusters() {
-    for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
-        int cluster_num = it->first;
-        std::vector<int> point_indices = final_clusters[cluster_num];
-        std::cout << "CLUSTER " << cluster_num << ": [";
-        for (int i = 0; i < point_indices.size(); ++i) {
-            std::cout << point_indices[i];
-            if (i < point_indices.size() - 1) {
-                std::cout << ", ";
-            }
-        }
+// void print_clusters() {
+//     for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
+//         int cluster_num = it->first;
+//         std::vector<int> point_indices = final_clusters[cluster_num];
+//         std::cout << "CLUSTER " << cluster_num << ": [";
+//         for (int i = 0; i < point_indices.size(); ++i) {
+//             std::cout << point_indices[i];
+//             if (i < point_indices.size() - 1) {
+//                 std::cout << ", ";
+//             }
+//         }
 
-        std::cout << "]" << std::endl;
-    }
-}
+//         std::cout << "]" << std::endl;
+//     }
+// }
 
 void print_output() {
     if (output_centroids) {
         print_centroids();
     } else {
-        std::map<int, int> point_labels;
-        for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
-            int label = it->first;
-            std::vector<int> cluster_points = final_clusters[label];
+        // std::map<int, int> point_labels;
+        // for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
+        //     int label = it->first;
+        //     std::vector<int> cluster_points = final_clusters[label];
 
-            for (int i = 0; i < cluster_points.size(); ++i) {
-                point_labels[cluster_points[i]] = label;
-            }
-        }
+        //     for (int i = 0; i < cluster_points.size(); ++i) {
+        //         point_labels[cluster_points[i]] = label;
+        //     }
+        // }
 
         for (int i = 0; i < points.size(); ++i) {
-            printf(" %d", point_labels[i]);
+            printf(" %d", final_clusters[i]);
         }
 
         std::cout << std::endl;
+    }
+}
+
+void kmeanspp_init_centroids() {
+    std::cout << "WE DOING KMEANS++ BABY" << std::endl;
+    int first_centroid_idx = (int) (rand_float() * points.size());
+    std::cout << first_centroid_idx << std::endl;
+    Point first_centroid = points[first_centroid_idx];
+    centroids.push_back(first_centroid);
+
+    // Kernel setup
+    float *h_points = new float[points.size() * dims];
+    for (int i = 0; i < points.size(); ++i) {
+        Point p = points[i];
+        for (int j = 0; j < dims; ++j) {
+            h_points[i * dims + j] = p.pos[j];
+        }
+    }
+
+    float *h_centroids = new float[num_clusters * dims];
+    for (int i = 0; i < dims; ++i) {
+        h_centroids[i] = first_centroid.pos[i];
+    }
+
+    float *h_distances = new float[points.size()];
+
+    float *d_points, *d_centroids, *d_distances;
+    CHECK_KERNEL(cudaMalloc(&d_points, points.size() * dims * sizeof(float)));
+    CHECK_KERNEL(cudaMalloc(&d_centroids, num_clusters * dims * sizeof(float)));
+    CHECK_KERNEL(cudaMalloc(&d_distances, points.size() * sizeof(float)));
+    CHECK_KERNEL(cudaMemcpy(d_points, h_points, points.size() * dims * sizeof(float), cudaMemcpyHostToDevice));
+
+    int num_point_threads = std::min((int) points.size(), 256);
+    int num_cluster_threads = std::min(num_clusters, 256);
+    dim3 point_block (num_point_threads);
+    dim3 point_grid ((points.size() + point_block.x - 1) / point_block.x);
+
+    while (centroids.size() < num_clusters) {
+
+        if (use_gpu) {
+
+            // Add new centroid to device memory
+            CHECK_KERNEL(cudaMemcpy(&d_centroids[(centroids.size() - 1) * dims], 
+                                    &h_centroids[(centroids.size() - 1) * dims], 
+                                    dims * sizeof(float), cudaMemcpyHostToDevice));
+            
+            // TODO: Kernel for computing D(x) for all points in parallel
+            kernel_kpp_dist_calc<<<point_grid, point_block>>>(d_centroids, d_points, centroids.size(), points.size(), d_distances, dims);
+            CHECK_KERNEL(cudaMemcpy(h_distances, d_distances, points.size() * sizeof(float), cudaMemcpyDeviceToHost));
+        } else {
+            for (int i = 0; i < points.size(); ++i) {
+                Point point = points[i];
+                float min_dist = FLT_MAX;
+
+                // Find closest centroid to point
+                for (int j = 0; j < centroids.size(); ++j) {
+                    Point centroid = centroids[j];
+                    float d = dist(point, centroid);
+
+                    if (d < min_dist) {
+                        min_dist = d;
+                    }
+                }
+
+                h_distances[i] = min_dist;
+            }
+        }
+
+        // Determine next centroid
+        float total_dist = 0.0;
+        for (int i = 0; i < points.size(); ++i) {
+            total_dist += h_distances[i];
+        }
+
+        float target = rand_float() * total_dist;
+        float dist = 0.0;
+        // std::cout << "DISTANCES: " << std::endl;
+        for (int i = 0; i < points.size(); ++i) {
+            dist += h_distances[i];
+            // std::cout << h_distances[i] << std::endl;
+            if (target < dist) {
+                std::cout << i << std::endl;
+                Point new_centroid = points[i];
+
+                for(int j = 0; j < dims; ++j) {
+                    h_centroids[centroids.size() * dims + j] = new_centroid.pos[j];
+                }
+
+                centroids.push_back(new_centroid);
+                break;
+            }
+        }
     }
 }
 
@@ -356,7 +452,11 @@ int main(int argc, char **argv) {
     srand(seed);
 
     // TODO: Add case for kmeans++ implementation
-    seq_kmeans_init_centroids();
+    if (use_kpp) {
+        kmeanspp_init_centroids();
+    } else {
+        seq_kmeans_init_centroids();
+    }
 
     // Sequential implementation
     if (!use_gpu && !use_shared_mem && !use_kpp) {
