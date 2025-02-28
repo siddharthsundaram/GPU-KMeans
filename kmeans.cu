@@ -296,8 +296,6 @@ void par_kmeans() {
 }
 
 void print_centroids() {
-    // print_points(centroids);
-
     for (int i = 0; i < num_clusters; ++i) {
         Point centroid = centroids[i];
         std::cout << i << " ";
@@ -310,36 +308,10 @@ void print_centroids() {
     }
 }
 
-// void print_clusters() {
-//     for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
-//         int cluster_num = it->first;
-//         std::vector<int> point_indices = final_clusters[cluster_num];
-//         std::cout << "CLUSTER " << cluster_num << ": [";
-//         for (int i = 0; i < point_indices.size(); ++i) {
-//             std::cout << point_indices[i];
-//             if (i < point_indices.size() - 1) {
-//                 std::cout << ", ";
-//             }
-//         }
-
-//         std::cout << "]" << std::endl;
-//     }
-// }
-
 void print_output() {
     if (output_centroids) {
         print_centroids();
     } else {
-        // std::map<int, int> point_labels;
-        // for (auto it = final_clusters.begin(); it != final_clusters.end(); ++it) {
-        //     int label = it->first;
-        //     std::vector<int> cluster_points = final_clusters[label];
-
-        //     for (int i = 0; i < cluster_points.size(); ++i) {
-        //         point_labels[cluster_points[i]] = label;
-        //     }
-        // }
-
         for (int i = 0; i < points.size(); ++i) {
             printf(" %d", final_clusters[i]);
         }
@@ -426,7 +398,7 @@ void kmeanspp_init_centroids() {
             dist += h_distances[i];
             // std::cout << h_distances[i] << std::endl;
             if (target < dist) {
-                std::cout << i << std::endl;
+                // std::cout << i << std::endl;
                 Point new_centroid = points[i];
 
                 for(int j = 0; j < dims; ++j) {
@@ -444,37 +416,29 @@ int main(int argc, char **argv) {
 
     // Parse CLI args, read input file, and set random seed
     parse_args(argc, argv);
-    // print_args();
-
     read_points(points);
-    // print_points(points);
-
     srand(seed);
 
-    // TODO: Add case for kmeans++ implementation
+    // Kmeans++ implementation
     if (use_kpp) {
         kmeanspp_init_centroids();
+
+    // Normal kmeans initialization
     } else {
         seq_kmeans_init_centroids();
     }
 
     // Sequential implementation
     if (!use_gpu && !use_shared_mem && !use_kpp) {
-
-        // std::cout << "Before Kmeans:" << std::endl;
-        // print_centroids(); 
-
         seq_kmeans();
-        // std::cout << "After Kmeans:" << std::endl;
-        print_output();
-        // print_clusters();
 
     // Parallel CUDA implementation
     } else {
         CHECK_KERNEL(cudaSetDevice(0));
         par_kmeans();
-        print_output();
     }
+
+    print_output();
 
     return 0;
 }
