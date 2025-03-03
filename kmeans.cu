@@ -5,17 +5,16 @@
 #include <cuda_runtime.h>
 #include <cuda.h>
 #include <device_launch_parameters.h>
+#include <chrono>
 #include "arg_parser.h"
 #include "kmeans_kernel.cuh"
 
 std::vector<Point> points;
 std::vector<Point> centroids;
-// std::map<int, std::vector<int>> final_clusters;
 int *final_clusters;
+int num_iters = 0;
 
-void print_output();
-void print_centroids();
-
+// Inspired by Ed post and textbook
 #define CHECK_KERNEL(call) { \
     cudaError_t error = call; \
     if (error != cudaSuccess) { \
@@ -149,13 +148,14 @@ bool converged(std::vector<Point> old_centroids, std::vector<Point> new_centroid
 
 // Perform the Kmeans algorithm
 void seq_kmeans() {
-    std::cout << "WE DOING SEQUENTIAL KMEANS :(" << std::endl;
+    // std::cout << "WE DOING SEQUENTIAL KMEANS :(" << std::endl;
     static std::vector<Point> old_centroids = default_centroids();
     static std::vector<Point> new_centroids = centroids;
-    int num_iters = 0;
     final_clusters = new int[points.size()];
 
-    while (num_iters++ < max_iter && !converged(old_centroids, new_centroids)) {
+    while (num_iters < max_iter && !converged(old_centroids, new_centroids)) {
+
+        ++num_iters;
 
         // Store current centroids for convergence criterion
         old_centroids = new_centroids;
@@ -188,7 +188,7 @@ void seq_kmeans() {
 
 void par_kmeans() {
 
-    std::cout << "WE DOING PARALLEL KMEANS BABY" << std::endl;
+    // std::cout << "WE DOING PARALLEL KMEANS BABY" << std::endl;
 
     // Set up for CUDA
     float *h_points = new float[points.size() * dims];
@@ -210,7 +210,6 @@ void par_kmeans() {
     final_clusters = new int[points.size()];
     float *h_old_centroids = new float[num_clusters * dims];
     bool *h_converged = new bool[num_clusters];
-    int num_iters = 0;
     bool converged = false;
     float *d_points, *d_centroids, *d_old_centroids;
     int *d_assignment;
@@ -224,21 +223,22 @@ void par_kmeans() {
     CHECK_KERNEL(cudaMemcpy(d_centroids, h_centroids, num_clusters * dims * sizeof(float), cudaMemcpyHostToDevice));
 
     // Saw that RTX 6000 can only have 1024 threads per block, check this
-    int num_point_threads = std::min((int) points.size(), 256);
-    int num_cluster_threads = std::min(num_clusters, 256);
+    int num_point_threads = std::min((int) points.size(), threads_per_block);
+    int num_cluster_threads = std::min(num_clusters, threads_per_block);
     dim3 point_block (num_point_threads);
 
-    // TODO: Put parenthesis around numerator
-    dim3 point_grid (points.size() + point_block.x - 1 / point_block.x);
+    dim3 point_grid ((points.size() + point_block.x - 1) / point_block.x);
     dim3 centroid_block (num_cluster_threads);
-    dim3 centroid_grid (num_clusters + centroid_block.x - 1 / centroid_block.x);
+    dim3 centroid_grid ((num_clusters + centroid_block.x - 1) / centroid_block.x);
     int assignment_shared_mem_size = sizeof(float) * dims * (num_clusters);
     int compute_shared_mem_size = sizeof(float) * num_clusters * dims + sizeof(int) * num_clusters;
 
-    while (num_iters++ < max_iter && !converged) {
+    while (num_iters < max_iter && !converged) {
+
+        ++num_iters;
         
         if (use_shared_mem) {
-            std::cout << "WE USING SHARED MEMORY BABY" << std::endl;
+            // std::cout << "WE USING SHARED MEMORY BABY" << std::endl;
 
             // Parallelize cluster assignment
             kernel_shmem_assign_cluster<<<point_grid, point_block, assignment_shared_mem_size>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
@@ -281,7 +281,13 @@ void par_kmeans() {
     // Copy centroid data back to host and clean up
     CHECK_KERNEL(cudaMemcpy(h_centroids, d_centroids, num_clusters * dims * sizeof(float), cudaMemcpyDeviceToHost));
     CHECK_KERNEL(cudaMemcpy(final_clusters, d_assignment, points.size() * sizeof(int), cudaMemcpyDeviceToHost));
-    // TODO: Free all the device ptrs
+    cudaDeviceSynchronize();
+    CHECK_KERNEL(cudaFree(d_points));
+    CHECK_KERNEL(cudaFree(d_centroids));
+    CHECK_KERNEL(cudaFree(d_old_centroids));
+    CHECK_KERNEL(cudaFree(d_assignment));
+    CHECK_KERNEL(cudaFree(d_converged));
+
     for (int i = 0; i < num_clusters; ++i) {
         std::vector<float> pos(dims);
         for (int j = 0; j < dims; ++j) {
@@ -292,7 +298,7 @@ void par_kmeans() {
         centroids[i] = c;
     }
 
-    std::cout << "WE FINISHED PARALLEL KMEANS BABY" << std::endl;
+    // std::cout << "WE FINISHED PARALLEL KMEANS BABY" << std::endl;
 }
 
 void print_centroids() {
@@ -312,6 +318,7 @@ void print_output() {
     if (output_centroids) {
         print_centroids();
     } else {
+        printf("clusters:");
         for (int i = 0; i < points.size(); ++i) {
             printf(" %d", final_clusters[i]);
         }
@@ -321,9 +328,9 @@ void print_output() {
 }
 
 void kmeanspp_init_centroids() {
-    std::cout << "WE DOING KMEANS++ BABY" << std::endl;
+    // std::cout << "WE DOING KMEANS++ BABY" << std::endl;
     int first_centroid_idx = (int) (rand_float() * points.size());
-    std::cout << first_centroid_idx << std::endl;
+    // std::cout << first_centroid_idx << std::endl;
     Point first_centroid = points[first_centroid_idx];
     centroids.push_back(first_centroid);
 
@@ -349,13 +356,13 @@ void kmeanspp_init_centroids() {
     CHECK_KERNEL(cudaMalloc(&d_distances, points.size() * sizeof(float)));
     CHECK_KERNEL(cudaMemcpy(d_points, h_points, points.size() * dims * sizeof(float), cudaMemcpyHostToDevice));
 
-    int num_point_threads = std::min((int) points.size(), 256);
-    int num_cluster_threads = std::min(num_clusters, 256);
+    int num_point_threads = std::min((int) points.size(), threads_per_block);
     dim3 point_block (num_point_threads);
     dim3 point_grid ((points.size() + point_block.x - 1) / point_block.x);
 
     while (centroids.size() < num_clusters) {
 
+        // TODO: If time permits, implement shared memory for kpp
         if (use_gpu) {
 
             // Add new centroid to device memory
@@ -363,7 +370,6 @@ void kmeanspp_init_centroids() {
                                     &h_centroids[(centroids.size() - 1) * dims], 
                                     dims * sizeof(float), cudaMemcpyHostToDevice));
             
-            // TODO: Kernel for computing D(x) for all points in parallel
             kernel_kpp_dist_calc<<<point_grid, point_block>>>(d_centroids, d_points, centroids.size(), points.size(), d_distances, dims);
             CHECK_KERNEL(cudaMemcpy(h_distances, d_distances, points.size() * sizeof(float), cudaMemcpyDeviceToHost));
         } else {
@@ -410,9 +416,15 @@ void kmeanspp_init_centroids() {
             }
         }
     }
+
+    CHECK_KERNEL(cudaFree(d_points));
+    CHECK_KERNEL(cudaFree(d_centroids));
+    CHECK_KERNEL(cudaFree(d_distances));
 }
 
 int main(int argc, char **argv) {
+
+    auto start = std::chrono::high_resolution_clock::now();
 
     // Parse CLI args, read input file, and set random seed
     parse_args(argc, argv);
@@ -438,7 +450,11 @@ int main(int argc, char **argv) {
         par_kmeans();
     }
 
-    print_output();
+    cudaDeviceSynchronize();
+    auto stop = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> duration = stop - start;
+    printf("%d,%lf\n", num_iters, duration.count() / num_iters);
+    // print_output();
 
     return 0;
 }

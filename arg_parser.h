@@ -28,6 +28,7 @@ extern int seed;
 extern bool use_gpu;
 extern bool use_shared_mem;
 extern bool use_kpp;
+extern int threads_per_block;
 
 void parse_args(int argc, char **argv);
 void print_args();

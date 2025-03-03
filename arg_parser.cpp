@@ -10,6 +10,7 @@ int seed;
 bool use_gpu;
 bool use_shared_mem;
 bool use_kpp;
+int threads_per_block;
 
 void parse_args(int argc, char **argv) {
     
@@ -23,8 +24,9 @@ void parse_args(int argc, char **argv) {
         ("-c", "Output cluster centroids if true, labels of all points otherwise")
         ("-s", bpo::value<int>()->default_value(8675309), "Random generator seed")
         ("-g", "Enable GPU implementation if true, don't otherwise")
-        ("-f", "Enable shared memory GPU implementation if true, don'f otherwise")
-        ("-p", "Enable Kmeans++ implementation if true, don't otherwise");
+        ("-f", "Enable shared memory GPU implementation if true, don't otherwise")
+        ("-p", "Enable Kmeans++ implementation if true, don't otherwise")
+        ("-z", bpo::value<int>()->default_value(256), "Threads per block");
 
     bpo::variables_map var_map;
     try {
@@ -49,6 +51,7 @@ void parse_args(int argc, char **argv) {
     use_gpu = var_map.count("-g") > 0;
     use_shared_mem = var_map.count("-f") > 0;
     use_kpp = var_map.count("-p") > 0;
+    threads_per_block = var_map["-z"].as<int>();
 }
 
 void print_args() {
@@ -62,6 +65,7 @@ void print_args() {
     std::cout << "GPU Implementation: " << (use_gpu ? "Enabled" : "Disabled") << "\n";
     std::cout << "Shared-Memory GPU: " << (use_shared_mem ? "Enabled" : "Disabled") << "\n";
     std::cout << "KMeans++: " << (use_kpp ? "Enabled" : "Disabled") << "\n";
+    std::cout << "Threads per block: " << threads_per_block << "\n";
 }
 
 Point load_point(std::string line, std::string delimiter) {
