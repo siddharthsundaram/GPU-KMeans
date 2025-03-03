@@ -26,29 +26,32 @@ $(EXE): $(CUDA_OBJS) $(CPP_OBJS)
 
 test:
 
-	# END TO END TESTING
+	# END TO END / DATA TRANSFER TESTING
 
-	bash -c 'num=32; while [[ $$num -le 1024 ]]; do \
-		./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -z $$num >> performance/e2e/small_seq.txt; \
-		./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -g -z $$num >> performance/e2e/small_gpu.txt; \
-		./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -f -z $$num >> performance/e2e/small_shmem.txt; \
-		./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -p -z $$num >> performance/e2e/small_seq_kpp.txt; \
-		./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -g -p -z $$num >> performance/e2e/small_gpu_kpp.txt; \
-		./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -f -p -z $$num >> performance/e2e/small_shmem_kpp.txt; \
-		./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -z $$num >> performance/e2e/medium_seq.txt; \
-		./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -g -z $$num >> performance/e2e/medium_gpu.txt; \
-		./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -f -z $$num >> performance/e2e/medium_shmem.txt; \
-		./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -p -z $$num >> performance/e2e/medium_seq_kpp.txt; \
-		./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -g -p -z $$num >> performance/e2e/medium_gpu_kpp.txt; \
-		./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -f -p -z $$num >> performance/e2e/medium_shmem_kpp.txt; \
-		./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -z $$num >> performance/e2e/large_seq.txt; \
-		./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -g -z $$num >> performance/e2e/large_gpu.txt; \
-		./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -f -z $$num >> performance/e2e/large_shmem.txt; \
-		./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -p -z $$num >> performance/e2e/large_seq_kpp.txt; \
-		./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -g -p -z $$num >> performance/e2e/large_gpu_kpp.txt; \
-		./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -f -p -z $$num >> performance/e2e/large_shmem_kpp.txt; \
-		((num *= 2)); \
-	done'
+	# bash -c 'num=32; while [[ $$num -le 1024 ]]; do \
+	# 	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -z $$num >> performance/data_transfer/small_seq.txt; \
+	# 	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -g -z $$num >> performance/data_transfer/small_gpu.txt; \
+	# 	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -f -z $$num >> performance/data_transfer/small_shmem.txt; \
+	# 	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -p -z $$num >> performance/data_transfer/small_seq_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -g -p -z $$num >> performance/data_transfer/small_gpu_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -f -p -z $$num >> performance/data_transfer/small_shmem_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -z $$num >> performance/data_transfer/medium_seq.txt; \
+	# 	./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -g -z $$num >> performance/data_transfer/medium_gpu.txt; \
+	# 	./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -f -z $$num >> performance/data_transfer/medium_shmem.txt; \
+	# 	./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -p -z $$num >> performance/data_transfer/medium_seq_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -g -p -z $$num >> performance/data_transfer/medium_gpu_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -f -p -z $$num >> performance/data_transfer/medium_shmem_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -z $$num >> performance/data_transfer/large_seq.txt; \
+	# 	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -g -z $$num >> performance/data_transfer/large_gpu.txt; \
+	# 	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -f -z $$num >> performance/data_transfer/large_shmem.txt; \
+	# 	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -p -z $$num >> performance/data_transfer/large_seq_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -g -p -z $$num >> performance/data_transfer/large_gpu_kpp.txt; \
+	# 	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -f -p -z $$num >> performance/data_transfer/large_shmem_kpp.txt; \
+	# 	((num *= 2)); \
+	# done'
+
+	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -f
+	# ./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -f -p
 
 
 clean:

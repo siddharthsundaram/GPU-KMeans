@@ -13,6 +13,8 @@ std::vector<Point> points;
 std::vector<Point> centroids;
 int *final_clusters;
 int num_iters = 0;
+float total_data_transfer_time = 0.0;
+cudaEvent_t start, stop;
 
 // Inspired by Ed post and textbook
 #define CHECK_KERNEL(call) { \
@@ -214,13 +216,22 @@ void par_kmeans() {
     float *d_points, *d_centroids, *d_old_centroids;
     int *d_assignment;
     bool *d_converged;
+    float data_transfer_time;
+
     CHECK_KERNEL(cudaMalloc(&d_points, points.size() * dims * sizeof(float)));
     CHECK_KERNEL(cudaMalloc(&d_centroids, num_clusters * dims * sizeof(float)));
     CHECK_KERNEL(cudaMalloc(&d_old_centroids, num_clusters * dims * sizeof(float)));
     CHECK_KERNEL(cudaMalloc(&d_assignment, points.size() * sizeof(int)));
     CHECK_KERNEL(cudaMalloc(&d_converged, num_clusters * sizeof(bool)));
+
+    CHECK_KERNEL(cudaEventRecord(start, 0));
     CHECK_KERNEL(cudaMemcpy(d_points, h_points, points.size() * dims * sizeof(float), cudaMemcpyHostToDevice));
     CHECK_KERNEL(cudaMemcpy(d_centroids, h_centroids, num_clusters * dims * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK_KERNEL(cudaEventRecord(stop, 0));
+    CHECK_KERNEL(cudaEventSynchronize(stop));
+
+    CHECK_KERNEL(cudaEventElapsedTime(&data_transfer_time, start, stop));
+    total_data_transfer_time += data_transfer_time;
 
     // Saw that RTX 6000 can only have 1024 threads per block, check this
     int num_point_threads = std::min((int) points.size(), threads_per_block);
@@ -265,7 +276,15 @@ void par_kmeans() {
         kernel_check_convergence<<<centroid_grid, centroid_block>>>(d_centroids, d_old_centroids, d_converged, num_clusters, dims, thresh);
 
         // Set up for next iteration
+        float time_i;
+        CHECK_KERNEL(cudaEventRecord(start, 0));
         CHECK_KERNEL(cudaMemcpy(h_converged, d_converged, num_clusters * sizeof(bool), cudaMemcpyDeviceToHost));
+        CHECK_KERNEL(cudaMemcpy(d_old_centroids, d_centroids, num_clusters * dims * sizeof(float), cudaMemcpyDeviceToDevice));
+        CHECK_KERNEL(cudaEventRecord(stop, 0));
+        CHECK_KERNEL(cudaEventSynchronize(stop));
+        CHECK_KERNEL(cudaEventElapsedTime(&time_i, start, stop));
+        total_data_transfer_time += time_i;
+
         bool local_converged = true;
         for (int i = 0; i < num_clusters; ++i) {
             if (!h_converged[i]) {
@@ -275,13 +294,19 @@ void par_kmeans() {
 
         converged = local_converged;
         
-        CHECK_KERNEL(cudaMemcpy(d_old_centroids, d_centroids, num_clusters * dims * sizeof(float), cudaMemcpyDeviceToDevice));
     }
 
     // Copy centroid data back to host and clean up
+    float time_e;
+    CHECK_KERNEL(cudaEventRecord(start, 0));
     CHECK_KERNEL(cudaMemcpy(h_centroids, d_centroids, num_clusters * dims * sizeof(float), cudaMemcpyDeviceToHost));
     CHECK_KERNEL(cudaMemcpy(final_clusters, d_assignment, points.size() * sizeof(int), cudaMemcpyDeviceToHost));
-    cudaDeviceSynchronize();
+    CHECK_KERNEL(cudaEventRecord(stop, 0));
+    CHECK_KERNEL(cudaEventSynchronize(stop));
+    CHECK_KERNEL(cudaEventElapsedTime(&time_e, start, stop));
+    total_data_transfer_time += time_e;
+
+    CHECK_KERNEL(cudaDeviceSynchronize());
     CHECK_KERNEL(cudaFree(d_points));
     CHECK_KERNEL(cudaFree(d_centroids));
     CHECK_KERNEL(cudaFree(d_old_centroids));
@@ -354,7 +379,14 @@ void kmeanspp_init_centroids() {
     CHECK_KERNEL(cudaMalloc(&d_points, points.size() * dims * sizeof(float)));
     CHECK_KERNEL(cudaMalloc(&d_centroids, num_clusters * dims * sizeof(float)));
     CHECK_KERNEL(cudaMalloc(&d_distances, points.size() * sizeof(float)));
+
+    float transfer_time;
+    CHECK_KERNEL(cudaEventRecord(start, 0));
     CHECK_KERNEL(cudaMemcpy(d_points, h_points, points.size() * dims * sizeof(float), cudaMemcpyHostToDevice));
+    CHECK_KERNEL(cudaEventRecord(stop, 0));
+    CHECK_KERNEL(cudaEventSynchronize(stop));
+    CHECK_KERNEL(cudaEventElapsedTime(&transfer_time, start, stop));
+    total_data_transfer_time += transfer_time;
 
     int num_point_threads = std::min((int) points.size(), threads_per_block);
     dim3 point_block (num_point_threads);
@@ -366,12 +398,24 @@ void kmeanspp_init_centroids() {
         if (use_gpu) {
 
             // Add new centroid to device memory
+            float time1, time2;
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             CHECK_KERNEL(cudaMemcpy(&d_centroids[(centroids.size() - 1) * dims], 
                                     &h_centroids[(centroids.size() - 1) * dims], 
                                     dims * sizeof(float), cudaMemcpyHostToDevice));
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&time1, start, stop));
+            total_data_transfer_time += time1;
             
             kernel_kpp_dist_calc<<<point_grid, point_block>>>(d_centroids, d_points, centroids.size(), points.size(), d_distances, dims);
+
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             CHECK_KERNEL(cudaMemcpy(h_distances, d_distances, points.size() * sizeof(float), cudaMemcpyDeviceToHost));
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&time2, start, stop));
+            total_data_transfer_time += time2;
         } else {
             for (int i = 0; i < points.size(); ++i) {
                 Point point = points[i];
@@ -424,6 +468,30 @@ void kmeanspp_init_centroids() {
 
 int main(int argc, char **argv) {
 
+    // cudaDeviceProp prop;
+    // int device_id = 0;
+
+    // cudaError_t err = cudaGetDeviceProperties(&prop, device_id);
+    // if (err != cudaSuccess) {
+    //     std::cerr << "Failed to get device properties: " << cudaGetErrorString(err) << std::endl;
+    //     return 1;
+    // }
+
+    // std::cout << "Device Name: " << prop.name << std::endl;
+    // std::cout << "Total Global Memory: " << prop.totalGlobalMem / (1024 * 1024) << " MB" << std::endl;
+    // std::cout << "Compute Capability: " << prop.major << "." << prop.minor << std::endl;
+    // std::cout << "Multiprocessors: " << prop.multiProcessorCount << std::endl;
+    // std::cout << "Max Threads per Block: " << prop.maxThreadsPerBlock << std::endl;
+    // std::cout << "Max Threads per Multiprocessor: " << prop.maxThreadsPerMultiProcessor << std::endl;
+    // std::cout << "Max Threads Dim: (" << prop.maxThreadsDim[0] << ", "
+    //           << prop.maxThreadsDim[1] << ", " << prop.maxThreadsDim[2] << ")" << std::endl;
+    // std::cout << "Max Grid Size: (" << prop.maxGridSize[0] << ", "
+    //           << prop.maxGridSize[1] << ", " << prop.maxGridSize[2] << ")" << std::endl;
+    // std::cout << "Shared Memory per Block: " << prop.sharedMemPerBlock / 1024 << " KB" << std::endl;
+    // std::cout << "Warp Size is: " << prop.warpSize << std::endl;
+
+    CHECK_KERNEL(cudaEventCreate(&start));
+    CHECK_KERNEL(cudaEventCreate(&stop));
     auto start = std::chrono::high_resolution_clock::now();
 
     // Parse CLI args, read input file, and set random seed
@@ -447,14 +515,18 @@ int main(int argc, char **argv) {
     // Parallel CUDA implementation
     } else {
         CHECK_KERNEL(cudaSetDevice(0));
+
         par_kmeans();
     }
 
     cudaDeviceSynchronize();
     auto stop = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> duration = stop - start;
-    printf("%d,%lf\n", num_iters, duration.count() / num_iters);
+    // printf("%d,%lf\n", num_iters, duration.count() / num_iters);
     // print_output();
+    // std::cout << "TOTAL DATA TRANSFER TIME: " << total_data_transfer_time << " ms" << std::endl;
+    // std::cout << "TOTAL TIME: " << duration.count() << " ms" << std::endl;
+    printf("%f,%lf\n", total_data_transfer_time, duration.count());
 
     return 0;
 }
