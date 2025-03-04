@@ -15,6 +15,7 @@ int *final_clusters;
 int num_iters = 0;
 float total_data_transfer_time = 0.0;
 cudaEvent_t start, stop;
+float t_parallel = 0.0;
 
 // Inspired by Ed post and textbook
 #define CHECK_KERNEL(call) { \
@@ -252,28 +253,68 @@ void par_kmeans() {
             // std::cout << "WE USING SHARED MEMORY BABY" << std::endl;
 
             // Parallelize cluster assignment
+            float t_assign;
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             kernel_shmem_assign_cluster<<<point_grid, point_block, assignment_shared_mem_size>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&t_assign, start, stop));
+            t_parallel += t_assign;
 
             // Parallelize new centroid computation
             int *d_counts;
             CHECK_KERNEL(cudaMalloc(&d_counts, sizeof(int) * num_clusters));
             cudaMemset(d_centroids, 0, num_clusters * dims * sizeof(float));
             cudaMemset(d_counts, 0, num_clusters * sizeof(int));
+
+            float t_compute;
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             kernel_shmem_compute_new_centroids<<<point_grid, point_block, compute_shared_mem_size>>>(d_points, d_centroids, d_assignment, d_counts, points.size(), num_clusters, dims);
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&t_compute, start, stop));
+            t_parallel += t_compute;
+
             cudaDeviceSynchronize();
+
+            float t_avg;
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             kernel_shmem_average_centroids<<<centroid_grid, centroid_block>>>(d_centroids, d_counts, num_clusters, dims);
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&t_avg, start, stop));
+            t_parallel += t_avg;
+
             CHECK_KERNEL(cudaFree(d_counts));
         } else {
 
             // Parallelize cluster assignment
+            float t_assign;
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             kernel_assign_cluster<<<point_grid, point_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&t_assign, start, stop));
+            t_parallel += t_assign;
 
             // Parallelize new centroid computation
+            float t_compute;
+            CHECK_KERNEL(cudaEventRecord(start, 0));
             kernel_compute_new_centroids<<<centroid_grid, centroid_block>>>(d_points, d_centroids, d_assignment, points.size(), num_clusters, dims);
+            CHECK_KERNEL(cudaEventRecord(stop, 0));
+            CHECK_KERNEL(cudaEventSynchronize(stop));
+            CHECK_KERNEL(cudaEventElapsedTime(&t_compute, start, stop));
+            t_parallel += t_compute;
         }
 
         // Parallelize convergence check
+        float t_converge;
+        CHECK_KERNEL(cudaEventRecord(start, 0));
         kernel_check_convergence<<<centroid_grid, centroid_block>>>(d_centroids, d_old_centroids, d_converged, num_clusters, dims, thresh);
+        CHECK_KERNEL(cudaEventRecord(stop, 0));
+        CHECK_KERNEL(cudaEventSynchronize(stop));
+        CHECK_KERNEL(cudaEventElapsedTime(&t_converge, start, stop));
+        t_parallel += t_converge;
 
         // Set up for next iteration
         float time_i;
@@ -395,45 +436,33 @@ void kmeanspp_init_centroids() {
     while (centroids.size() < num_clusters) {
 
         // TODO: If time permits, implement shared memory for kpp
-        if (use_gpu) {
+        // if (use_gpu) {
 
             // Add new centroid to device memory
-            float time1, time2;
-            CHECK_KERNEL(cudaEventRecord(start, 0));
-            CHECK_KERNEL(cudaMemcpy(&d_centroids[(centroids.size() - 1) * dims], 
-                                    &h_centroids[(centroids.size() - 1) * dims], 
-                                    dims * sizeof(float), cudaMemcpyHostToDevice));
-            CHECK_KERNEL(cudaEventRecord(stop, 0));
-            CHECK_KERNEL(cudaEventSynchronize(stop));
-            CHECK_KERNEL(cudaEventElapsedTime(&time1, start, stop));
-            total_data_transfer_time += time1;
-            
-            kernel_kpp_dist_calc<<<point_grid, point_block>>>(d_centroids, d_points, centroids.size(), points.size(), d_distances, dims);
+        float time1, time2;
+        CHECK_KERNEL(cudaEventRecord(start, 0));
+        CHECK_KERNEL(cudaMemcpy(&d_centroids[(centroids.size() - 1) * dims], 
+                                &h_centroids[(centroids.size() - 1) * dims], 
+                                dims * sizeof(float), cudaMemcpyHostToDevice));
+        CHECK_KERNEL(cudaEventRecord(stop, 0));
+        CHECK_KERNEL(cudaEventSynchronize(stop));
+        CHECK_KERNEL(cudaEventElapsedTime(&time1, start, stop));
+        total_data_transfer_time += time1;
+        
+        float t_kpp;
+        CHECK_KERNEL(cudaEventRecord(start, 0));
+        kernel_kpp_dist_calc<<<point_grid, point_block>>>(d_centroids, d_points, centroids.size(), points.size(), d_distances, dims);
+        CHECK_KERNEL(cudaEventRecord(stop, 0));
+        CHECK_KERNEL(cudaEventSynchronize(stop));
+        CHECK_KERNEL(cudaEventElapsedTime(&t_kpp, start, stop));
+        t_parallel += t_kpp;
 
-            CHECK_KERNEL(cudaEventRecord(start, 0));
-            CHECK_KERNEL(cudaMemcpy(h_distances, d_distances, points.size() * sizeof(float), cudaMemcpyDeviceToHost));
-            CHECK_KERNEL(cudaEventRecord(stop, 0));
-            CHECK_KERNEL(cudaEventSynchronize(stop));
-            CHECK_KERNEL(cudaEventElapsedTime(&time2, start, stop));
-            total_data_transfer_time += time2;
-        } else {
-            for (int i = 0; i < points.size(); ++i) {
-                Point point = points[i];
-                float min_dist = FLT_MAX;
-
-                // Find closest centroid to point
-                for (int j = 0; j < centroids.size(); ++j) {
-                    Point centroid = centroids[j];
-                    float d = dist(point, centroid);
-
-                    if (d < min_dist) {
-                        min_dist = d;
-                    }
-                }
-
-                h_distances[i] = min_dist;
-            }
-        }
+        CHECK_KERNEL(cudaEventRecord(start, 0));
+        CHECK_KERNEL(cudaMemcpy(h_distances, d_distances, points.size() * sizeof(float), cudaMemcpyDeviceToHost));
+        CHECK_KERNEL(cudaEventRecord(stop, 0));
+        CHECK_KERNEL(cudaEventSynchronize(stop));
+        CHECK_KERNEL(cudaEventElapsedTime(&time2, start, stop));
+        total_data_transfer_time += time2;
 
         // Determine next centroid
         float total_dist = 0.0;
@@ -489,15 +518,18 @@ int main(int argc, char **argv) {
     //           << prop.maxGridSize[1] << ", " << prop.maxGridSize[2] << ")" << std::endl;
     // std::cout << "Shared Memory per Block: " << prop.sharedMemPerBlock / 1024 << " KB" << std::endl;
     // std::cout << "Warp Size is: " << prop.warpSize << std::endl;
+    // std::cout << "Max Blocks per SM is: " << prop.maxBlocksPerMultiProcessor << std::endl;
 
     CHECK_KERNEL(cudaEventCreate(&start));
     CHECK_KERNEL(cudaEventCreate(&stop));
-    auto start = std::chrono::high_resolution_clock::now();
+    auto total_start = std::chrono::high_resolution_clock::now();
 
     // Parse CLI args, read input file, and set random seed
     parse_args(argc, argv);
     read_points(points);
     srand(seed);
+
+    auto par_start = std::chrono::high_resolution_clock::now();
 
     // Kmeans++ implementation
     if (use_kpp) {
@@ -520,13 +552,17 @@ int main(int argc, char **argv) {
     }
 
     cudaDeviceSynchronize();
-    auto stop = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double, std::milli> duration = stop - start;
-    // printf("%d,%lf\n", num_iters, duration.count() / num_iters);
-    // print_output();
+    auto total_stop = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> duration = total_stop - total_start;
+    std::chrono::duration<double, std::milli> algo_duration = total_stop - par_start;
+    printf("%d,%lf\n", num_iters, duration.count() / num_iters);
+    print_output();
     // std::cout << "TOTAL DATA TRANSFER TIME: " << total_data_transfer_time << " ms" << std::endl;
     // std::cout << "TOTAL TIME: " << duration.count() << " ms" << std::endl;
-    printf("%f,%lf\n", total_data_transfer_time, duration.count());
+    // std::cout << "PARALLEL TIME: " << t_parallel << " ms" << std::endl;
+    // std::cout << "SEQUENTIAL TIME: " << duration.count() - t_parallel << " ms" << std::endl;
+    // std::cout << "ALGO TIME: " << algo_duration.count() << " ms" << std::endl;
+    // printf("%f,%lf\n", total_data_transfer_time, duration.count());
 
     return 0;
 }

@@ -50,8 +50,9 @@ test:
 	# 	((num *= 2)); \
 	# done'
 
-	./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -f
-	# ./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -f -p
+	# ./$(EXE) -k 16 -d 16 -i tests/random-n2048-d16-c16.txt -m 10000 -t 0.0001 -c -p -z 1024
+	# ./$(EXE) -k 16 -d 24 -i tests/random-n16384-d24-c16.txt -m 10000 -t 0.0001 -c -p -z 1024
+	./$(EXE) -k 16 -d 32 -i tests/random-n65536-d32-c16.txt -m 10000 -t 0.0001 -c -p -z 1024
 
 
 clean:
